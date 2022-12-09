@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/extensions/draft-ERC20Permit.sol";
 
 
 contract FirstApproval is Ownable, ERC20Capped, ERC20Burnable, ERC20Permit {
-    event FeeCollected(address indexed from, address indexed to, uint256 feeAmount);
+    event FeeCollected(address indexed from, address indexed to, uint256 amount);
     event SettingsSet(address indexed treasury, uint256 feeNumerator, uint256 burnNumerator);
 
     uint256 public constant MAX_SUPPLY = 100 * 1_000_000 * 10**18;
@@ -22,10 +22,7 @@ contract FirstApproval is Ownable, ERC20Capped, ERC20Burnable, ERC20Permit {
     //        uint48 burnNumerator;  // 48 bits
     // _settings = treasury << (48+48) + feeNumerator << 48 + burnNumerator
     // read more - https://medium.com/@novablitz/storing-structs-is-costing-you-gas-774da988895e
-    uint256 internal _settings;
-    uint256 internal constant SETTINGS_ADDRESS_MASK = type(uint160).max << (48 + 48);  // like 1..1 0..0 0..0
-    uint256 internal constant SETTINGS_FEE_NUMERATOR_MASK = type(uint48).max << 48;    // like 0..0 1..1 0..0
-    uint256 internal constant SETTINGS_BURN_NUMERATOR_MASK = type(uint48).max;         // like 0..0 0..0 1..1
+    uint256 public _settings;
 
     /// @notice set token settings (onlyOwner call)
     /// @param treasury treasury address to collect fee (not zero if feeNumerator not zero)
@@ -41,7 +38,10 @@ contract FirstApproval is Ownable, ERC20Capped, ERC20Burnable, ERC20Permit {
             require(treasury != address(0), "empty treasury");
         }
         require(burnNumerator <= MAX_BURN_NUMERATOR, "too big burn");  // note: burnNumerator < type(uint48).max
-        _settings = uint160(treasury) << (48+48) + feeNumerator << 48 + burnNumerator;
+        _settings =
+            (uint256(uint160(treasury)) << (48+48)) +
+            (feeNumerator << 48) +
+            burnNumerator;
         emit SettingsSet(treasury, feeNumerator, burnNumerator);
     }
 
@@ -51,9 +51,9 @@ contract FirstApproval is Ownable, ERC20Capped, ERC20Burnable, ERC20Permit {
     /// @return burnNumerator burn numerator denominated by 10000
     function settings() public view returns(address treasury, uint256 feeNumerator, uint256 burnNumerator) {
         uint256 currentSettings = _settings;  // read storage once
-        treasury = address(uint160(currentSettings & SETTINGS_ADDRESS_MASK));
-        feeNumerator = uint256(currentSettings & SETTINGS_FEE_NUMERATOR_MASK);
-        burnNumerator = uint256(currentSettings & SETTINGS_BURN_NUMERATOR_MASK);
+        treasury = address(uint160(currentSettings >> (48 + 48)));
+        feeNumerator = (currentSettings >> 48) & type(uint48).max;
+        burnNumerator = currentSettings & type(uint48).max;
     }
 
     constructor()
@@ -77,6 +77,7 @@ contract FirstApproval is Ownable, ERC20Capped, ERC20Burnable, ERC20Permit {
             uint256 burnAmount = amount * burnNumerator / DENOMINATOR;
             super._burn(from, burnAmount);
         }
+        super._transfer(from, to, amount);
     }
 
     /// @notice mint amount of tokens to the balance of account (onlyOwner, totalSupply <= MAX_SUPPLY)
